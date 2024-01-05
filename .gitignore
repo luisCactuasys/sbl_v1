@@ -1,3 +1,5 @@
 /.vscode/*
 /build/*
 *.exe
+/debug_dir/*
+/to_load/*

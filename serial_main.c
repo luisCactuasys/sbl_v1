@@ -46,7 +46,8 @@ int32_t uartClear();
 
 //serial bootloader
 int32_t sblUartSync();
-
+int32_t sblPing();
+int32_t sblGetStatus();
 /*
  * ********************** Function definitions *********************************
  */
@@ -101,16 +102,17 @@ int main(int argc, char *argv[])
     {
         printf("\nSync UART ACK!!");
     }
-    else if(ret == 1)
+    
+    //
+    printf("\nPing SBL...");
+    ret = sblPing();
+    if(ret == 0 )
     {
-        printf("\nSync UART NACK!!");
-    }
-    else
-    {
-        printf("\nSync UART UNKNOWN!!");
+        printf("\nPing SBL ACK!!");
     }
 
-    
+    ret = sblGetStatus();
+    printf("\nCurrent Status is: %d", ret);
 
     
     uartClose();
@@ -199,11 +201,15 @@ int32_t uartClear()
 
 
 
+
+
 int32_t sblUartSync()
 {
     uint8_t uartSync[] = {0x55, 0x55};
     uint8_t recvResp[5] = {0};
 
+    
+    uartClear();
     //send bytes to sync
     uartSend(uartSync, sizeof(uartSync));
 
@@ -224,4 +230,67 @@ int32_t sblUartSync()
         return -1;
     }
     
+}
+
+
+int32_t sblPing()
+{
+    uint8_t sblPing[] = {0x03, 0x20, 0x20};
+    uint8_t recvResp[5] = {0};
+
+    
+    uartClear();
+    //send bytes to ping
+    uartSend(sblPing, sizeof(sblPing));
+
+    //wait for ACK or NACK
+    uartRecv(recvResp, 2);
+
+    if(!memcmp(recvResp, sblACK, sizeof(sblACK)))
+    {   
+        //it was ACK
+        return 0;
+    }
+    else if(!memcmp(recvResp, sblNACK, sizeof(sblNACK)))
+    {
+        return 1;
+    }
+    else
+    {
+        return -1;
+    }
+    
+}
+
+
+/**
+ * @brief   Gets the status of the Serial Bootloader
+ * 
+ * @ref     CC13x0, CC26x0 SimpleLink™ Wireless MCU Technical Reference Manual (Rev. I)
+ *          8.2.3.5 COMMAND_GET_STATUS
+ *
+ * @return  COMMAND_RET_SUCCESS     0x40 Status for successful command
+ *          COMMAND_RET_UNKNOWN_CMD 0x41 Status for unknown command
+ *          COMMAND_RET_INVALID_CMD 0x42 Status for invalid command (in other words, incorrect packet size)
+ *          COMMAND_RET_INVALID_ADR 0x43 Status for invalid input address
+ *          COMMAND_RET_FLASH_FAIL  0x44 Status for failing flash erase or program operation
+ */
+int32_t sblGetStatus()
+{
+    uint8_t sblGetStatus[] = {0x03, 0x23, 0x23};
+    uint8_t recvResp[5] = {0};
+    uint8_t sblStatusSize = 0x03;
+    
+    uartClear();
+    //send bytes to request status
+    uartSend(sblGetStatus, sizeof(sblGetStatus));
+
+    //wait for ACK or NACK
+    uartRecv(recvResp, sblStatusSize);
+    
+    //send ACK to sbl
+    uartSend(sblACK, sizeof(sblACK));
+    
+    //return the Status bytes
+    return recvResp[2];
 }

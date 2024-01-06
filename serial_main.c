@@ -22,7 +22,7 @@
 /*
  * *********************** Defines ********************************************
  */
-
+#define M3_BLE_READER_START_ADDR 0x00000000
 const uint8_t sblACK[2]     = {0x00, 0xCC};
 const uint8_t sblNACK[2]    = {0x00, 0x33};
 /*
@@ -103,7 +103,7 @@ int main(int argc, char *argv[])
         printf("\nSync UART ACK!!");
     }
     
-    //
+    //Ping SBL
     printf("\nPing SBL...");
     ret = sblPing();
     if(ret == 0 )
@@ -112,9 +112,9 @@ int main(int argc, char *argv[])
     }
 
     ret = sblGetStatus();
-    printf("\nCurrent Status is: %d", ret);
+    printf("\nCurrent Status is: %02x", ret);
 
-    
+ 
     uartClose();
 
     return 0;
@@ -286,11 +286,36 @@ int32_t sblGetStatus()
     uartSend(sblGetStatus, sizeof(sblGetStatus));
 
     //wait for ACK or NACK
-    uartRecv(recvResp, sblStatusSize);
+    uartRecv(recvResp, sblStatusSize + sizeof(sblACK));
     
     //send ACK to sbl
     uartSend(sblACK, sizeof(sblACK));
-    
+
     //return the Status bytes
-    return recvResp[2];
+    return recvResp[4];
+}
+
+
+
+int32_t sblDownloadSetup(uint32_t startAddr, uint32_t size)
+{
+    uint8_t sblDownloadSetup[11] = {0};
+    uint8_t recvResp[5] = {0};
+    
+
+    //prepare frame to send Downlaod command
+
+    
+    uartClear();
+    //send bytes to request status
+    uartSend(sblGetStatus, sizeof(sblGetStatus));
+
+    //wait for ACK or NACK
+    uartRecv(recvResp, sblStatusSize + sizeof(sblACK));
+    
+    //send ACK to sbl
+    uartSend(sblACK, sizeof(sblACK));
+
+    //return the Status bytes
+    return recvResp[4];
 }

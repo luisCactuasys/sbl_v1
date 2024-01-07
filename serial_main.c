@@ -24,9 +24,11 @@
  * *********************** Defines ********************************************
  */
 #define M3_BLE_READER_START_ADDR 0x00000000
-#define M3_BLE_READER_MAX_SIZE   0x20000 // Adjust the buffer size as needed
+#define M3_BLE_READER_MAX_SIZE   0x30000 // Adjust the buffer size as needed
 
-const char *fwFileName = "to_load/ble_reader_2_9_80.bin";
+const char *fwFileName = "to_load/blinky_backdoor_select_btn2640r2.bin";
+//const char *fwFileName = "to_load/ble_reader_2_9_70.bin";
+
 const uint8_t sblACK[2]     = {0x00, 0xCC};
 const uint8_t sblNACK[2]    = {0x00, 0x33};
 /*
@@ -424,15 +426,17 @@ int32_t sblSendData(uint8_t *pData, uint8_t size)
     {
         return -1;
     }
-    if(!size || size > 253)
+    if(!size || size > 252)
     {
         return -2;
     }
 
     sblSendData[0]  = 3 + size;
-    sblSendData[1]  = sblChecksumCalc(pData, size);
+    sblSendData[1]  = 0x00;     //checksum is calculated after
     sblSendData[2]  = 0x24;
     memcpy(&sblSendData[3], pData, size);
+
+    sblSendData[1]  = sblChecksumCalc(&sblSendData[2], size + 1);
 
     uartClear();
     //send bytes to request status
@@ -440,7 +444,12 @@ int32_t sblSendData(uint8_t *pData, uint8_t size)
 
     //wait for ACK or NACK
     uartRecv(recvResp, sizeof(sblACK));
-    
+
+    printf("\nSD: recv : %02X", recvResp[0]);
+    printf("\nSD: recv : %02X", recvResp[1]);
+    printf("\nSD: recv : %02X", recvResp[2]);
+    printf("\nSD: recv : %02X", recvResp[3]);
+    printf("\nSD: recv : %02X", recvResp[4]);
     //return the Status bytes
     if(!memcmp(recvResp, sblACK, sizeof(sblACK)))
     {   
@@ -468,16 +477,23 @@ int32_t sblLoadFirmware(uint8_t *pFw, uint32_t size, uint32_t startAddr)
     uint32_t currSentSize = 0;
 
 
+    printf("\nLF 1: %X  -  %d  - %X ", pFw, size, startAddr);
+
+
     //Start Downlaod Setup
     ret = sblDownloadSetup(startAddr, size);
     if(ret)
     {
+        printf("\nLF 2: %X", ret);
+
         return -1;
     }
     //Get Status after sync and ping
     ret = sblGetStatus();
     if(ret != 0x40)     //success
     {
+        printf("\nLF 3: %X", ret);
+
         return -ret;
     }
     
@@ -494,18 +510,23 @@ int32_t sblLoadFirmware(uint8_t *pFw, uint32_t size, uint32_t startAddr)
         }
 
         ret = sblSendData(&pFw[totalSentSize], currSentSize);
+
+        totalSentSize += currSentSize;
+
         if(ret)
         {
+            printf("\nLF 5: %X", ret);
             return totalSentSize;
         }
 
         ret = sblGetStatus();
         if(ret != 0x40)     //success
         {
-            return -ret;
+            printf("\nLF 6: %X", ret);
+            return totalSentSize;
         }
 
-        totalSentSize += currSentSize;
+        
     }
     
     return totalSentSize;

@@ -19,10 +19,14 @@
 #include <unistd.h>
 
 
+
 /*
  * *********************** Defines ********************************************
  */
 #define M3_BLE_READER_START_ADDR 0x00000000
+#define M3_BLE_READER_MAX_SIZE   0x20000 // Adjust the buffer size as needed
+
+const char *fwFileName = "to_load/ble_reader_2_9_80.bin";
 const uint8_t sblACK[2]     = {0x00, 0xCC};
 const uint8_t sblNACK[2]    = {0x00, 0x33};
 /*
@@ -37,6 +41,9 @@ COMMTIMEOUTS timeouts = { 0 };
 /*
  * ********************** Private Function Prototypes **************************
  */
+//FILE
+int32_t fileGetContent(const char *name, uint8_t *pDest, uint32_t *fileSize);
+
 //UART
 int32_t uartInit(char *ComPortName);
 int32_t uartClose();
@@ -50,6 +57,7 @@ int32_t sblPing();
 int32_t sblGetStatus();
 int32_t sblDownloadSetup(uint32_t startAddr, uint32_t size);
 int32_t sblSendData(uint8_t *pData, uint8_t size);
+int32_t sblLoadFirmware(uint8_t *pFw, uint32_t size, uint32_t startAddr);
 
 uint8_t sblChecksumCalc(uint8_t *pStart, uint8_t size);
 /*
@@ -68,7 +76,7 @@ int main(int argc, char *argv[])
     char ComPortName[20] = "\\\\.\\COM";
     char forDebugPort[5] = "5";
     int32_t ret = 0;
-    uint8_t *pFWBuf = NULL;
+    uint8_t fwBuf[M3_BLE_READER_MAX_SIZE] = {0};
     uint32_t fwSize = 0;
     
 
@@ -99,8 +107,18 @@ int main(int argc, char *argv[])
 
     uartInit(ComPortName);
     
+    /**
+     * Getting FW data from file
+     */
+    //
+    printf("\nGetting FW data from file...");
+    ret = fileGetContent(fwFileName, fwBuf, &fwSize);
+    printf("\nGetting FW data from file: %02x - size: %d!!", ret, fwSize);
     
-    
+
+    /**
+     * Comunication initialization
+     */
     //try to sync UART
     printf("\nSync UART...");
     ret = sblUartSync();
@@ -116,26 +134,12 @@ int main(int argc, char *argv[])
     ret = sblGetStatus();
     printf("\nCurrent Status is: %02x!!", ret);
 
-    //Start Downlaod Setup
-    printf("\nPrepare for Download...");
-    ret = sblDownloadSetup(M3_BLE_READER_START_ADDR, 0x1000);
-    printf("\nPrepare for Download: %02X!!", ret);
-
-    //Get Status after sync and ping
-    printf("\nGet current Status...");
-    ret = sblGetStatus();
-    printf("\nCurrent Status is: %02x!!", ret);
-
-    //Send Data
-    printf("\nSending data...");
-    ret = sblSendData(pFWBuf, fwSize);
-    printf("\nSending data: %02X!!", ret);
-
-    //Get Status after sync and ping
-    printf("\nGet current Status...");
-    ret = sblGetStatus();
-    printf("\nCurrent Status is: %02x!!", ret);
-
+    /**
+     * Load the firmware
+     */
+    printf("\nLoad the firmware...");
+    ret = sblLoadFirmware(fwBuf, fwSize, M3_BLE_READER_START_ADDR);
+    printf("\nLoad the firmware: %X!!", ret);
     uartClose();
 
     return 0;
@@ -143,7 +147,10 @@ int main(int argc, char *argv[])
 
 
 
-
+/******************************************************************************
+ *                      UART API
+ * @brief   This section has the necessary commands to interact with the UART
+******************************************************************************/
 
 int32_t uartInit(char *ComPortName)
 {
@@ -220,9 +227,51 @@ int32_t uartClear()
 }
 
 
+/******************************************************************************
+ *                      FILE API
+ * @brief   This section has the necessary commands get the contents of a file
+******************************************************************************/
+
+int32_t fileGetContent(const char *name, uint8_t *pDest, uint32_t *fileSize)
+{
+    FILE *filePtr;
+    size_t result = 0;
+
+    // Open the file in binary read mode
+    filePtr = fopen(name, "rb");
+
+    if (filePtr == NULL) {
+        perror("Error opening file");
+        return -1;
+    }
+
+    // Get the file length
+    fseek(filePtr, 0, SEEK_END);
+    *fileSize = ftell(filePtr);
+    rewind(filePtr);
+
+    // Read the file into the buffer
+    result = fread(pDest, 1, *fileSize, filePtr);
+    if (result != *fileSize) {
+        perror("Error reading file");
+        fclose(filePtr);
+        return -1;
+    }
+
+    fclose(filePtr);
+
+    return 0;
+}
 
 
 
+
+
+/******************************************************************************
+ *                      SERIAL BOOTLOADER API
+ * @brief   This section has the necessary commands to interact with the Serial
+            Bootloader and laod a file
+******************************************************************************/
 
 int32_t sblUartSync()
 {
@@ -409,7 +458,58 @@ int32_t sblSendData(uint8_t *pData, uint8_t size)
 }
 
 
+int32_t sblLoadFirmware(uint8_t *pFw, uint32_t size, uint32_t startAddr)
+{
+    int32_t ret = 0;
+    uint8_t *currFrame = pFw;
+    uint8_t *nextFrame = NULL;
+    uint32_t endAddr = startAddr + size;
+    uint32_t totalSentSize = 0;
+    uint32_t currSentSize = 0;
 
+
+    //Start Downlaod Setup
+    ret = sblDownloadSetup(startAddr, size);
+    if(ret)
+    {
+        return -1;
+    }
+    //Get Status after sync and ping
+    ret = sblGetStatus();
+    if(ret != 0x40)     //success
+    {
+        return -ret;
+    }
+    
+    while(totalSentSize < size)
+    {
+        if(totalSentSize < size - 128)
+        {
+            currSentSize = 128;
+        }
+        else
+        {
+            //get the remaining
+            currSentSize = size - totalSentSize;
+        }
+
+        ret = sblSendData(&pFw[totalSentSize], currSentSize);
+        if(ret)
+        {
+            return totalSentSize;
+        }
+
+        ret = sblGetStatus();
+        if(ret != 0x40)     //success
+        {
+            return -ret;
+        }
+
+        totalSentSize += currSentSize;
+    }
+    
+    return totalSentSize;
+}
 
 
 

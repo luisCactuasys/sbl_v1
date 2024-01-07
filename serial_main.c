@@ -57,6 +57,7 @@ int32_t uartClear();
 int32_t sblUartSync();
 int32_t sblPing();
 int32_t sblGetStatus();
+int32_t sblEraseSector(uint32_t startAddr);
 int32_t sblDownloadSetup(uint32_t startAddr, uint32_t size);
 int32_t sblSendData(uint8_t *pData, uint8_t size);
 int32_t sblLoadFirmware(uint8_t *pFw, uint32_t size, uint32_t startAddr);
@@ -533,7 +534,48 @@ int32_t sblLoadFirmware(uint8_t *pFw, uint32_t size, uint32_t startAddr)
 }
 
 
+int32_t sblEraseSector(uint32_t startAddr)
+{
+    uint8_t sblEraseSector[7] = {0};
+    uint8_t recvResp[5] = {0};
+    
 
+    //prepare frame to send Downlaod command
+    sblEraseSector[0]    = 11;
+    sblEraseSector[1]    = 0x00;     //checksum is calculated after
+    sblEraseSector[2]    = 0x26;
+    sblEraseSector[3] = (startAddr >> 24) & 0xFF;
+    sblEraseSector[4] = (startAddr >> 16) & 0xFF;
+    sblEraseSector[5] = (startAddr >> 8) & 0xFF;
+    sblEraseSector[6] =  startAddr & 0xFF;
+    
+    //calculate checksum
+    sblEraseSector[1] = sblChecksumCalc( &sblEraseSector[2], 
+                                            sizeof(sblEraseSector) - 2);
+
+    uartClear();
+    //send bytes to request status
+    uartSend(sblEraseSector, sizeof(sblEraseSector));
+
+    //wait for ACK or NACK
+    uartRecv(recvResp, sizeof(sblACK));
+    
+    //return the Status bytes
+    if(!memcmp(recvResp, sblACK, sizeof(sblACK)))
+    {   
+        //it was ACK
+        return 0;
+    }
+    else if(!memcmp(recvResp, sblNACK, sizeof(sblNACK)))
+    {
+        return 1;
+    }
+    else
+    {
+        return -1;
+    }
+    
+}
 
 
 

@@ -48,6 +48,10 @@ int32_t uartClear();
 int32_t sblUartSync();
 int32_t sblPing();
 int32_t sblGetStatus();
+int32_t sblDownloadSetup(uint32_t startAddr, uint32_t size);
+int32_t sblSendData(uint8_t *pData, uint8_t size);
+
+uint8_t sblChecksumCalc(uint8_t *pStart, uint8_t size);
 /*
  * ********************** Function definitions *********************************
  */
@@ -64,6 +68,8 @@ int main(int argc, char *argv[])
     char ComPortName[20] = "\\\\.\\COM";
     char forDebugPort[5] = "5";
     int32_t ret = 0;
+    uint8_t *pFWBuf = NULL;
+    uint32_t fwSize = 0;
     
 
     printf("\nNum of args %d", argc);
@@ -98,23 +104,38 @@ int main(int argc, char *argv[])
     //try to sync UART
     printf("\nSync UART...");
     ret = sblUartSync();
-    if(ret == 0 )
-    {
-        printf("\nSync UART ACK!!");
-    }
+    printf("\nSync UART: %02X!!", ret);
     
     //Ping SBL
     printf("\nPing SBL...");
     ret = sblPing();
-    if(ret == 0 )
-    {
-        printf("\nPing SBL ACK!!");
-    }
-
+    printf("\nPing SBL: %02X!!", ret);
+    
+    //Get Status after sync and ping
+    printf("\nGet current Status...");
     ret = sblGetStatus();
-    printf("\nCurrent Status is: %02x", ret);
+    printf("\nCurrent Status is: %02x!!", ret);
 
- 
+    //Start Downlaod Setup
+    printf("\nPrepare for Download...");
+    ret = sblDownloadSetup(M3_BLE_READER_START_ADDR, 0x1000);
+    printf("\nPrepare for Download: %02X!!", ret);
+
+    //Get Status after sync and ping
+    printf("\nGet current Status...");
+    ret = sblGetStatus();
+    printf("\nCurrent Status is: %02x!!", ret);
+
+    //Send Data
+    printf("\nSending data...");
+    ret = sblSendData(pFWBuf, fwSize);
+    printf("\nSending data: %02X!!", ret);
+
+    //Get Status after sync and ping
+    printf("\nGet current Status...");
+    ret = sblGetStatus();
+    printf("\nCurrent Status is: %02x!!", ret);
+
     uartClose();
 
     return 0;
@@ -304,18 +325,106 @@ int32_t sblDownloadSetup(uint32_t startAddr, uint32_t size)
     
 
     //prepare frame to send Downlaod command
+    sblDownloadSetup[0]    = 11;
+    sblDownloadSetup[1]    = 0x00;     //checksum is calculated after
+    sblDownloadSetup[2]    = 0x21;
+    sblDownloadSetup[3] = (startAddr >> 24) & 0xFF;
+    sblDownloadSetup[4] = (startAddr >> 16) & 0xFF;
+    sblDownloadSetup[5] = (startAddr >> 8) & 0xFF;
+    sblDownloadSetup[6] =  startAddr & 0xFF;
 
+    sblDownloadSetup[7] = (size >> 24) & 0xFF;
+    sblDownloadSetup[8] = (size >> 16) & 0xFF;
+    sblDownloadSetup[9] = (size >> 8) & 0xFF;
+    sblDownloadSetup[10] = size & 0xFF;
     
+    //calculate checksum
+    sblDownloadSetup[1] = sblChecksumCalc( &sblDownloadSetup[2], 
+                                            sizeof(sblDownloadSetup) - 2);
+
     uartClear();
     //send bytes to request status
-    uartSend(sblGetStatus, sizeof(sblGetStatus));
+    uartSend(sblDownloadSetup, sizeof(sblDownloadSetup));
 
     //wait for ACK or NACK
-    uartRecv(recvResp, sblStatusSize + sizeof(sblACK));
+    uartRecv(recvResp, sizeof(sblACK));
     
-    //send ACK to sbl
-    uartSend(sblACK, sizeof(sblACK));
-
     //return the Status bytes
-    return recvResp[4];
+    if(!memcmp(recvResp, sblACK, sizeof(sblACK)))
+    {   
+        //it was ACK
+        return 0;
+    }
+    else if(!memcmp(recvResp, sblNACK, sizeof(sblNACK)))
+    {
+        return 1;
+    }
+    else
+    {
+        return -1;
+    }
+}
+
+
+int32_t sblSendData(uint8_t *pData, uint8_t size)
+{   
+    uint8_t sblSendData[256];
+    uint8_t recvResp[5] = {0};
+
+    if(!pData)
+    {
+        return -1;
+    }
+    if(!size || size > 253)
+    {
+        return -2;
+    }
+
+    sblSendData[0]  = 3 + size;
+    sblSendData[1]  = sblChecksumCalc(pData, size);
+    sblSendData[2]  = 0x24;
+    memcpy(&sblSendData[3], pData, size);
+
+    uartClear();
+    //send bytes to request status
+    uartSend(sblSendData, 3 + size);
+
+    //wait for ACK or NACK
+    uartRecv(recvResp, sizeof(sblACK));
+    
+    //return the Status bytes
+    if(!memcmp(recvResp, sblACK, sizeof(sblACK)))
+    {   
+        //it was ACK
+        return 0;
+    }
+    else if(!memcmp(recvResp, sblNACK, sizeof(sblNACK)))
+    {
+        return 1;
+    }
+    else
+    {
+        return -1;
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+uint8_t sblChecksumCalc(uint8_t *pStart, uint8_t size)
+{
+    uint8_t sum = 0;
+    for(int32_t i = 0; i < size; i++)
+    {
+        sum += pStart[i];
+    }
+
+    return sum; 
 }

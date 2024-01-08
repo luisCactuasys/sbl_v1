@@ -23,10 +23,11 @@
 /*
  * *********************** Defines ********************************************
  */
+#define CC2640R2_SECTOR_SIZE    0x1000
 #define M3_BLE_READER_START_ADDR 0x00000000
-#define M3_BLE_READER_MAX_SIZE   0x30000 // Adjust the buffer size as needed
+#define M3_BLE_READER_MAX_SIZE   0x20000 // Adjust the buffer size as needed
 
-const char *fwFileName = "to_load/blinky_backdoor_select_btn2640r2.bin";
+const char *fwFileName = "to_load/ble_reader_2_9_80.bin";
 //const char *fwFileName = "to_load/ble_reader_2_9_70.bin";
 
 const uint8_t sblACK[2]     = {0x00, 0xCC};
@@ -58,6 +59,8 @@ int32_t sblUartSync();
 int32_t sblPing();
 int32_t sblGetStatus();
 int32_t sblEraseSector(uint32_t startAddr);
+int32_t sblEraseSectorRange(uint32_t startAddr, uint32_t size);
+int32_t sblEraseBank();
 int32_t sblDownloadSetup(uint32_t startAddr, uint32_t size);
 int32_t sblSendData(uint8_t *pData, uint8_t size);
 int32_t sblLoadFirmware(uint8_t *pFw, uint32_t size, uint32_t startAddr);
@@ -72,41 +75,13 @@ uint8_t sblChecksumCalc(uint8_t *pStart, uint8_t size);
  * 
  * @return int 
  */
-int main(int argc, char *argv[]) 
+int main() 
 {
-    int port = -1;
-    int opt;
-    char ComPortName[20] = "\\\\.\\COM";
-    char forDebugPort[5] = "5";
+    char ComPortName[20] = "\\\\.\\COM5";
     int32_t ret = 0;
     uint8_t fwBuf[M3_BLE_READER_MAX_SIZE] = {0};
     uint32_t fwSize = 0;
     
-
-    printf("\nNum of args %d", argc);
-
-    // Using getopt to parse command line options
-    while ((opt = getopt(argc, argv, "p:")) != -1) {
-        switch (opt) {
-            case 'p':
-                port = atoi(optarg);
-                break;
-            default:
-                fprintf(stderr, "Usage: %s -p port_number\n", argv[0]);
-                exit(EXIT_FAILURE);
-        }
-    }
-
-    if(!port)
-    {
-        printf("\nInvalid given port");
-        printf("\nOpening default port instead - %s", forDebugPort);
-        strcat(ComPortName, forDebugPort);
-    }
-    else
-    {
-        strcat(ComPortName, argv[2]);
-    }
 
     uartInit(ComPortName);
     
@@ -446,11 +421,6 @@ int32_t sblSendData(uint8_t *pData, uint8_t size)
     //wait for ACK or NACK
     uartRecv(recvResp, sizeof(sblACK));
 
-    printf("\nSD: recv : %02X", recvResp[0]);
-    printf("\nSD: recv : %02X", recvResp[1]);
-    printf("\nSD: recv : %02X", recvResp[2]);
-    printf("\nSD: recv : %02X", recvResp[3]);
-    printf("\nSD: recv : %02X", recvResp[4]);
     //return the Status bytes
     if(!memcmp(recvResp, sblACK, sizeof(sblACK)))
     {   
@@ -480,20 +450,29 @@ int32_t sblLoadFirmware(uint8_t *pFw, uint32_t size, uint32_t startAddr)
 
     printf("\nLF 1: %X  -  %d  - %X ", pFw, size, startAddr);
 
-
-    //Start Downlaod Setup
-    ret = sblDownloadSetup(startAddr, size);
+    //Erase Bank
+    ret = sblEraseBank();
     if(ret)
     {
         printf("\nLF 2: %X", ret);
 
         return -1;
     }
+
+    //Start Downlaod Setup
+    ret = sblDownloadSetup(startAddr, size);
+    if(ret)
+    {
+        printf("\nLF 3: %X", ret);
+
+        return -2;
+    }
+
     //Get Status after sync and ping
     ret = sblGetStatus();
     if(ret != 0x40)     //success
     {
-        printf("\nLF 3: %X", ret);
+        printf("\nLF 4: %X", ret);
 
         return -ret;
     }
@@ -512,8 +491,6 @@ int32_t sblLoadFirmware(uint8_t *pFw, uint32_t size, uint32_t startAddr)
 
         ret = sblSendData(&pFw[totalSentSize], currSentSize);
 
-        totalSentSize += currSentSize;
-
         if(ret)
         {
             printf("\nLF 5: %X", ret);
@@ -527,7 +504,7 @@ int32_t sblLoadFirmware(uint8_t *pFw, uint32_t size, uint32_t startAddr)
             return totalSentSize;
         }
 
-        
+        totalSentSize += currSentSize;
     }
     
     return totalSentSize;
@@ -541,7 +518,7 @@ int32_t sblEraseSector(uint32_t startAddr)
     
 
     //prepare frame to send Downlaod command
-    sblEraseSector[0]    = 11;
+    sblEraseSector[0]    = 7;
     sblEraseSector[1]    = 0x00;     //checksum is calculated after
     sblEraseSector[2]    = 0x26;
     sblEraseSector[3] = (startAddr >> 24) & 0xFF;
@@ -576,6 +553,61 @@ int32_t sblEraseSector(uint32_t startAddr)
     }
     
 }
+
+
+int32_t sblEraseBank()
+{
+    uint8_t sblEraseBank[] = {0x03, 0x2C, 0x2C};
+    uint8_t recvResp[5] = {0};
+
+    
+    uartClear();
+    //send bytes to ping
+    uartSend(sblEraseBank, sizeof(sblEraseBank));
+
+    //wait for ACK or NACK
+    uartRecv(recvResp, 2);
+
+    if(!memcmp(recvResp, sblACK, sizeof(sblACK)))
+    {   
+        //it was ACK
+        return 0;
+    }
+    else if(!memcmp(recvResp, sblNACK, sizeof(sblNACK)))
+    {
+        return 1;
+    }
+    else
+    {
+        return -1;
+    }
+}
+
+
+int32_t sblEraseSectorRange(uint32_t startAddr, uint32_t size)
+{
+    int32_t ret = 0;
+
+    if( ( size % 0x1000 ) )
+    {
+        return 1;
+    }
+
+    for(uint32_t i = startAddr; i < startAddr + size; i += 0x1000)
+    {
+        sblEraseSector(i);
+        if(ret)
+        {
+            return -1;
+        }   
+    }
+
+    return 0;
+}
+
+
+
+
 
 
 
